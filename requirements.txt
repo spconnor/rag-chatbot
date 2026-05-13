@@ -1,0 +1,6 @@
+streamlit
+numpy
+pypdf
+python-dotenv
+sentence-transformers==2.2.2
+ollama
