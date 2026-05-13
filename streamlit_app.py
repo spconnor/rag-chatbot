@@ -1,6 +1,4 @@
-import os
 import streamlit as st
-
 from chat_with_docs import (
     load_documents,
     chunk_all,
@@ -8,41 +6,62 @@ from chat_with_docs import (
     get_answer
 )
 
+DOCS_DIR = "docs"
+
 st.set_page_config(page_title="RAG Chatbot", layout="wide")
 
-st.title("📚 RAG Document Chatbot")
+st.title("📚 Simple RAG Chatbot")
 
-DOCS_DIR = "docs"
+# -------------------------
+# SESSION STATE
+# -------------------------
 
 if "index" not in st.session_state:
     st.session_state.index = None
+
+if "chunks" not in st.session_state:
     st.session_state.chunks = None
 
-uploaded_files = st.file_uploader(
-    "Upload PDFs or TXT files",
+
+# -------------------------
+# UPLOAD FILES
+# -------------------------
+
+uploaded = st.file_uploader(
+    "Upload PDF or TXT files",
     type=["pdf", "txt"],
     accept_multiple_files=True
 )
 
-if uploaded_files:
+if uploaded:
     os.makedirs(DOCS_DIR, exist_ok=True)
 
-    for uploaded_file in uploaded_files:
-        with open(os.path.join(DOCS_DIR, uploaded_file.name), "wb") as f:
-            f.write(uploaded_file.getbuffer())
+    for f in uploaded:
+        path = os.path.join(DOCS_DIR, f.name)
+        with open(path, "wb") as out:
+            out.write(f.read())
 
-    st.success("Files uploaded successfully")
+    st.success("Files uploaded!")
+
+
+# -------------------------
+# BUILD INDEX
+# -------------------------
 
 if st.button("Build Index"):
     docs = load_documents(DOCS_DIR)
     chunks = chunk_all(docs)
+    index, chunks = build_index(chunks)
 
-    emb_index, kept_chunks = build_index(chunks)
+    st.session_state.index = index
+    st.session_state.chunks = chunks
 
-    st.session_state.index = emb_index
-    st.session_state.chunks = kept_chunks
+    st.success("Index built successfully!")
 
-    st.success("Index built successfully")
+
+# -------------------------
+# CHAT
+# -------------------------
 
 question = st.text_input("Ask a question")
 
