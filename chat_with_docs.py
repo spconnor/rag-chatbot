@@ -4,10 +4,11 @@ from typing import List, Dict, Tuple
 
 import numpy as np
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 DOCS_DIR = "docs"
+
 
 # -----------------------------
 # LOAD DOCUMENTS
@@ -21,7 +22,7 @@ def read_txt(path: str) -> str:
 def read_pdf(path: str) -> str:
     try:
         reader = PdfReader(path)
-        return "\n".join([p.extract_text() or "" for p in reader.pages])
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
     except:
         return ""
 
@@ -48,9 +49,13 @@ def load_documents(folder: str) -> List[Dict]:
 # CHUNKING
 # -----------------------------
 
-def chunk_text(text: str, size: int = 800, overlap: int = 100) -> List[str]:
+def chunk_text(text: str, size: int = 800, overlap: int = 100):
     step = size - overlap
-    return [text[i:i+size] for i in range(0, len(text), step) if text[i:i+size].strip()]
+    return [
+        text[i:i + size]
+        for i in range(0, len(text), step)
+        if text[i:i + size].strip()
+    ]
 
 
 def chunk_all(docs: List[Dict]) -> List[Dict]:
@@ -62,33 +67,27 @@ def chunk_all(docs: List[Dict]) -> List[Dict]:
 
 
 # -----------------------------
-# EMBEDDINGS (SAFE VERSION)
+# TF-IDF VECTOR STORE (FIXED)
 # -----------------------------
 
-_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-def embed_texts(texts: List[str]) -> np.ndarray:
-    vecs = _model.encode(texts, normalize_embeddings=True)
-    return np.array(vecs, dtype="float32")
-
-
-def embed_query(text: str) -> np.ndarray:
-    vec = _model.encode([text], normalize_embeddings=True)[0]
-    return np.array(vec, dtype="float32")
-
-
-# -----------------------------
-# INDEX + SEARCH
-# -----------------------------
-
-def build_index(chunks: List[Dict]) -> Tuple[np.ndarray, List[Dict]]:
+def build_index(chunks):
     texts = [c["text"] for c in chunks]
-    index = embed_texts(texts)
-    return index, chunks
+
+    vectorizer = TfidfVectorizer()
+    matrix = vectorizer.fit_transform(texts).toarray()
+
+    return {
+        "vectorizer": vectorizer,
+        "matrix": matrix
+    }, chunks
 
 
-def search(index: np.ndarray, query_vec: np.ndarray, k: int = 4):
-    scores = index @ query_vec
+def embed_query(index_obj, query: str):
+    return index_obj["vectorizer"].transform([query]).toarray()[0]
+
+
+def search(index_obj, query_vec, k: int = 4):
+    scores = index_obj["matrix"] @ query_vec
     top = np.argsort(scores)[-k:][::-1]
     return top.tolist()
 
@@ -97,67 +96,43 @@ def search(index: np.ndarray, query_vec: np.ndarray, k: int = 4):
 # CONTEXT BUILDER
 # -----------------------------
 
-def build_context(chunks: List[Dict], idxs: List[int], max_chars: int = 1800):
+def build_context(chunks, idxs, max_chars=1800):
     selected = [chunks[i] for i in idxs]
 
-    context = []
+    parts = []
     total = 0
 
     for i, c in enumerate(selected):
         text = c["text"]
 
         if total + len(text) > max_chars:
-            text = text[: max_chars - total]
+            text = text[:max_chars - total]
 
-        context.append(
+        parts.append(
             f"[{i}] {text}\n(Source: {os.path.basename(c['source'])})"
         )
 
         total += len(text)
 
-    return "\n\n---\n\n".join(context), selected
+    return "\n\n---\n\n".join(parts), selected
 
 
 # -----------------------------
-# SIMPLE ANSWER ENGINE (SAFE)
+# MAIN RAG FUNCTION
 # -----------------------------
 
-def generate_answer(context: str, question: str) -> str:
-    return (
-        "Based on your documents:\n\n"
-        f"{context}\n\n"
-        f"\nQuestion: {question}\n\n"
-        "NOTE: This is a retrieval-only version (no external LLM connected)."
-    )
+def get_answer(index_obj, chunks, question: str):
+    q_vec = embed_query(index_obj, question)
+    idxs = search(index_obj, q_vec)
 
-
-# -----------------------------
-# MAIN PIPELINE
-# -----------------------------
-
-def get_answer(chunks, index, question):
-    q_vec = embed_query(question)
-    idxs = search(index, q_vec)
     context, sources = build_context(chunks, idxs)
-    answer = generate_answer(context, question)
+
+    answer = f"""
+Based on your documents:
+
+{context}
+
+Question: {question}
+"""
+
     return answer, sources
-
-
-# -----------------------------
-# OPTIONAL CLI TEST
-# -----------------------------
-
-if __name__ == "__main__":
-    docs = load_documents(DOCS_DIR)
-    chunks = chunk_all(docs)
-    index, chunks = build_index(chunks)
-
-    print("Ready.")
-
-    while True:
-        q = input("You: ")
-        if q.lower() in ["exit", "quit"]:
-            break
-
-        ans, src = get_answer(chunks, index, q)
-        print("\n", ans)
