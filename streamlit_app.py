@@ -5,10 +5,7 @@ from chat_with_docs import (
     load_documents,
     chunk_all,
     build_index,
-    get_query_vec,
-    search,
-    build_context,
-    ask_ollama
+    get_answer
 )
 
 st.set_page_config(page_title="RAG Chatbot", layout="wide")
@@ -40,7 +37,7 @@ if st.button("Build Index"):
     docs = load_documents(DOCS_DIR)
     chunks = chunk_all(docs)
 
-    emb_index, kept_chunks = build_index(chunks, "ollama")
+    emb_index, kept_chunks = build_index(chunks)
 
     st.session_state.index = emb_index
     st.session_state.chunks = kept_chunks
@@ -53,22 +50,15 @@ if st.button("Ask"):
     if st.session_state.index is None:
         st.error("Please build the index first")
     else:
-        q_vec = get_query_vec(question, "ollama")
-
-        idxs = search(st.session_state.index, q_vec, k=4)
-
-        context, ctx_chunks = build_context(
+        answer, sources = get_answer(
             st.session_state.chunks,
-            idxs,
-            max_chars=1800
+            st.session_state.index,
+            question
         )
-
-        answer = ask_ollama(context, question)
 
         st.subheader("Answer")
         st.write(answer)
 
         st.subheader("Sources")
-
-        for chunk in ctx_chunks:
-            st.write(chunk["source"])
+        for s in sources:
+            st.write(s["source"])
